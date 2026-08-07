@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>远程桌面</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  #screen { position: absolute; inset: 0; }
+  #screen canvas { display: block; }
+
+  /* ---- 连接状态 ---- */
+  #status {
+    position: absolute; top: 8px; right: 10px; z-index: 70;
+    background: rgba(13,17,23,.72); color: #8b949e;
+    padding: 4px 10px; border-radius: 6px; font-size: 12px;
+    pointer-events: none; border: 1px solid rgba(48,54,61,.6);
+  }
+  #status.on { color: #3fb950; }
+
+  /* ---- 快捷入口层（右下角竖排，位于工具按钮上方） ---- */
+  #dock {
+    position: absolute; right: 8px; bottom: 54px; z-index: 50;
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 6px 5px;
+    background: rgba(13,17,23,.68);
+    border: 1px solid rgba(48,54,61,.5);
+    border-radius: 10px;
+    backdrop-filter: blur(3px);
+  }
+  .sc {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    width: 54px; padding: 4px 2px; border-radius: 8px;
+    cursor: pointer; user-select: none; border: 1px solid transparent;
+    transition: background .15s;
+  }
+  .sc:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.25); }
+  .sc img { width: 26px; height: 26px; border-radius: 5px; object-fit: contain; }
+  .sc span { color: #e6edf3; font-size: 10px; text-shadow: 0 1px 3px rgba(0,0,0,.9); line-height: 1.1; }
+  .sc .glyph { width: 26px; height: 26px; border-radius: 5px; background: #21262d; color: #e6edf3; display: flex; align-items: center; justify-content: center; font-size: 15px; }
+
+  /* ---- 右下工具 ---- */
+  #tools {
+    position: absolute; right: 10px; bottom: 10px; z-index: 70;
+    display: flex; gap: 6px;
+  }
+  .tb {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: rgba(22,27,34,.85); color: #e6edf3;
+    border: 1px solid #30363d; cursor: pointer; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .tb:hover { background: #21262d; }
+  #kbInput { position: fixed; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+
+  /* 提示 toast */
+  #toast {
+    position: absolute; left: 50%; bottom: 60px; transform: translateX(-50%);
+    background: rgba(217,58,73,.95); color: #fff; padding: 6px 14px;
+    border-radius: 6px; font-size: 12px; z-index: 90; display: none;
+    max-width: 80%; text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="screen"></div>
+<div id="status">连接中…</div>
+
+<!-- 快捷入口层 -->
+<div id="dock">
+  <div class="sc" data-app="https://github.com"><img src="/api/qwenpaw-desktop/icon?name=github" alt=""><span>GitHub</span></div>
+  <div class="sc" data-app="https://www.google.com"><img src="/api/qwenpaw-desktop/icon?name=google" alt=""><span>Google</span></div>
+  <div class="sc" data-app="https://www.bing.com"><img src="/api/qwenpaw-desktop/icon?name=bing" alt=""><span>Bing</span></div>
+  <div class="sc" data-app="https://www.baidu.com"><img src="/api/qwenpaw-desktop/icon?name=baidu" alt=""><span>百度</span></div>
+  <div class="sc" data-app="__terminal__"><span class="glyph">❯_</span><span>终端</span></div>
+  <div class="sc" data-app="__files__"><span class="glyph">📁</span><span>文件</span></div>
+</div>
+
+<!-- 右下工具 -->
+<div id="tools">
+  <button class="tb" id="btnDock" title="快捷入口">☰</button>
+  <button class="tb" id="btnReload" title="重新连接">⟳</button>
+  <button class="tb" id="btnClose" title="关闭桌面">⏻</button>
+</div>
+
+<input id="kbInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+<div id="toast"></div>
+
+<script type="module">
+  import RFB from '/api/qwenpaw-desktop/novnc/core/rfb.js';
+
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $('status');
+  const toastEl = $('toast');
+  let toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.style.display = 'block';
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, 3500);
+  }
+
+  // ---- 连接（同源 WS 转发路由） ----
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const host = location.hostname;
+  const port = location.port;
+  const wsUrl = proto + '://' + host + (port ? ':' + port : '') + '/api/qwenpaw-desktop/vnc';
+  const rfb = new RFB($('screen'), wsUrl, {});
+
+  rfb.addEventListener('connect', () => {
+    statusEl.textContent = '已连接';
+    statusEl.classList.add('on');
+    // 连接成功后自动聚焦输入（桌面端物理键盘直接可用）
+    rfb.focusInput();
+  });
+  rfb.addEventListener('disconnect', (e) => {
+    statusEl.textContent = '已断开' + (e.detail && e.detail.clean ? '' : '（重连中…）');
+    statusEl.classList.remove('on');
+    if (!(e.detail && e.detail.clean)) {
+      setTimeout(() => location.reload(), 2500);
+    }
+  });
+  rfb.addEventListener('securityfailure', (e) => {
+    statusEl.textContent = '连接失败';
+    toast('VNC 连接失败: ' + (e.detail && e.detail.reason || ''));
+  });
+  rfb.scaleViewport = true;
+  rfb.resizeSession = false;
+
+  // ---- 键盘：桌面端物理键盘 & 移动端系统软键盘 ----
+  const kbInput = $('kbInput');
+  // 点击画面时聚焦隐藏输入框（桌面端捕获物理键盘；移动端点击唤起系统软键盘）
+  document.addEventListener('mousedown', () => { rfb.focusInput(); }, true);
+  document.addEventListener('touchstart', () => { kbInput.focus(); }, { passive: true });
+
+  // ---- 快捷入口 ----
+  const dock = $('dock');
+  document.querySelectorAll('.sc').forEach((el) => {
+    el.addEventListener('click', async () => {
+      const app = el.dataset.app;
+      let ok = false, msg = '';
+      try {
+        if (app.startsWith('http')) {
+          const r = await fetch('/api/qwenpaw-desktop/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: app }),
+          });
+          const j = await r.json();
+          ok = j.ok; msg = j.error || '';
+        } else {
+          const name = app === '__terminal__' ? 'terminal' : 'files';
+          const r = await fetch('/api/qwenpaw-desktop/launch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ app: name }),
+          });
+          const j = await r.json();
+          ok = j.ok; msg = j.error || '';
+        }
+      } catch (e) { msg = String(e); }
+      if (ok) {
+        toast('已在桌面打开');
+        dock.style.display = 'none'; // 打开后收起快捷层，专注桌面
+      } else {
+        toast('打开失败: ' + (msg || '未知错误'));
+      }
+    });
+  });
+  $('btnDock').addEventListener('click', () => {
+    dock.style.display = dock.style.display === 'none' ? 'flex' : 'none';
+  });
+
+  // ---- 重连 / 关闭 ----
+  $('btnReload').addEventListener('click', () => location.reload());
+  $('btnClose').addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/qwenpaw-desktop/close', { method: 'POST' });
+      const j = await r.json();
+      toast(j.message || '桌面已关闭');
+      setTimeout(() => location.reload(), 1200);
+    } catch (e) { toast(String(e)); }
+  });
+
+  // 防止 iframe 内拖拽选择
+  document.addEventListener('selectstart', (e) => e.preventDefault());
+</script>
+</body>
+</html>
