@@ -1,5 +1,5 @@
 """
-QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.0.1
+QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.0
 （qwenpaw.platform.agentscope.io 专用插件）
 
 在 QwenPaw 界面内实时查看**服务器上的虚拟桌面**，鼠标/键盘操作完整映射到远程
@@ -47,7 +47,7 @@ from qwenpaw.pawapp import PawApp
 
 logger = logging.getLogger(__name__)
 
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.1.0"
 PLUGIN_NAME = "远程桌面"
 PLUGIN_ID = "qwenpaw-desktop"
 

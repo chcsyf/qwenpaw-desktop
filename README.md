@@ -1,8 +1,8 @@
-# qwenpaw-desktop — Web 远程桌面插件 v0.0.1
+# qwenpaw-desktop — Web 远程桌面插件 v0.1.0
 
-> **专用于 qwenpaw.platform.agentscope.io 平台**。应用启动入口：**应用 → 远程桌面** 🖥️
+> **专用于 qwenpaw.platform.agentscope.io 平台**。打开入口：**应用 → 远程桌面** 🖥️
 
-![qwenpaw-desktop 预览](qwenpaw-desktop-0.0.1.png)
+![qwenpaw-desktop 预览](qwenpaw-desktop-0.1.0.png)
 
 在 QwenPaw 界面内实时查看**服务器上的虚拟桌面**，鼠标/键盘操作完整映射到远程
 桌面（noVNC 客户端 + Xvfb 虚拟屏幕 + openbox 窗口管理器 + x11vnc）。
@@ -70,7 +70,8 @@ baidu.png）。`/api/qwenpaw-desktop/icon` 路由**优先从插件自带目录�
 
 1. 在服务器上安装上述系统包与图标
 2. 从平台插件市场安装本插件（或手动放入 QwenPaw 插件目录 `plugins/`）
-3. 打开 QwenPaw，进入 **应用 → 远程桌面** 🖥️ 即可使用
+3. **安装后先刷新页面**（若打开应用提示"尚未加载"，刷新浏览器后重试）
+4. 打开 QwenPaw，进入 **应用 → 远程桌面** 🖥️ 即可使用
 
 ## 架构与安全
 
