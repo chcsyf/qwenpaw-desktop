@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>远程桌面</title>
+<title>远程桌面 v0.1.1</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
@@ -61,6 +61,28 @@
     border-radius: 6px; font-size: 12px; z-index: 90; display: none;
     max-width: 80%; text-align: center;
   }
+
+  /* ---- 截图预览弹窗 ---- */
+  #shotModal {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(1,4,9,.82);
+    display: none; align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px;
+  }
+  #shotModal .shot-box {
+    max-width: 92vw; max-height: 78vh;
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 10px; overflow: auto;
+  }
+  #shotModal img { display: block; max-width: 90vw; max-height: 70vh; }
+  #shotModal .shot-actions { display: flex; gap: 8px; }
+  #shotModal button {
+    background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+    border-radius: 8px; padding: 7px 16px; font-size: 13px; cursor: pointer;
+  }
+  #shotModal button:hover { background: #30363d; }
+  #shotModal button.primary { background: #238636; border-color: #2ea043; }
+  #shotModal button.primary:hover { background: #2ea043; }
 </style>
 </head>
 <body>
@@ -80,8 +102,20 @@
 <!-- 右下工具 -->
 <div id="tools">
   <button class="tb" id="btnDock" title="快捷入口">☰</button>
+  <button class="tb" id="btnShot" title="截图当前桌面">📷</button>
+  <button class="tb" id="btnPaste" title="粘贴本地剪贴板到远程">📋</button>
   <button class="tb" id="btnReload" title="重新连接">⟳</button>
   <button class="tb" id="btnClose" title="关闭桌面">⏻</button>
+</div>
+
+<!-- 截图预览弹窗 -->
+<div id="shotModal">
+  <div class="shot-box"><img id="shotImg" alt="截图预览"></div>
+  <div class="shot-actions">
+    <button id="btnShotSave" class="primary">保存到公共区</button>
+    <button id="btnShotDownload">下载 PNG</button>
+    <button id="btnShotClose">关闭</button>
+  </div>
 </div>
 
 <input id="kbInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
@@ -127,6 +161,105 @@
   });
   rfb.scaleViewport = true;
   rfb.resizeSession = false;
+
+  // ---- 剪贴板互通（X11 CLIPBOARD + xclip，UTF-8） ----
+  // 不监听 noVNC 的 clipboard 事件：VNC 剪贴板协议是 Latin-1，中文会乱码，
+  // 且 x11vnc 会把 PRIMARY（鼠标选中即复制）也发过来，造成"选中就复制"。
+  // 改为轮询后端读远程 CLIPBOARD selection（Ctrl+C 复制的，UTF-8）。
+  let lastClipboard = null;
+  var pollClipboard = function () {
+    fetch('/api/qwenpaw-desktop/clipboard/read').then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) return;
+        var text = j.text || '';
+        if (text && text !== lastClipboard) {
+          lastClipboard = text;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text)
+              .then(function () { toast('已复制远程内容到本地剪贴板'); })
+              .catch(function () { /* 无权限时忽略 */ });
+          }
+        }
+      })
+      .catch(function () { /* 忽略轮询错误 */ });
+  };
+  // 首查 + 每 1.5s 轮询
+  setTimeout(pollClipboard, 1500);
+  setInterval(pollClipboard, 1500);
+
+  // 📋 粘贴：本地剪贴板 → 写入远程 CLIPBOARD 并自动 Ctrl+V
+  $('btnPaste').addEventListener('click', async () => {
+    let text = '';
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        text = await navigator.clipboard.readText();
+      }
+    } catch (e) { /* 剪贴板读取无权限，走手动输入 */ }
+    if (!text) {
+      text = window.prompt('粘贴到远程桌面的文本：', '');
+    }
+    if (!text) return;
+    try {
+      const r = await fetch('/api/qwenpaw-desktop/clipboard/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      lastClipboard = text;
+      toast('已粘贴到远程桌面');
+    } catch (e) {
+      toast('粘贴失败: ' + e.message);
+    }
+  });
+
+  // ---- 📷 截图 ----
+  const shotModal = $('shotModal');
+  const shotImg = $('shotImg');
+  let shotUrl = null;
+  $('btnShot').addEventListener('click', async () => {
+    try {
+      toast('正在截图…');
+      const r = await fetch('/api/qwenpaw-desktop/screenshot');
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(t || ('HTTP ' + r.status));
+      }
+      const blob = await r.blob();
+      if (shotUrl) URL.revokeObjectURL(shotUrl);
+      shotUrl = URL.createObjectURL(blob);
+      shotImg.src = shotUrl;
+      shotModal.style.display = 'flex';
+      toast('');
+    } catch (e) {
+      toast('截图失败: ' + e.message);
+    }
+  });
+  $('btnShotSave').addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/qwenpaw-desktop/screenshot/save', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || j.detail || ('HTTP ' + r.status));
+      toast('已保存: ' + j.path);
+      shotModal.style.display = 'none';
+    } catch (e) {
+      toast('保存失败: ' + e.message);
+    }
+  });
+  $('btnShotDownload').addEventListener('click', () => {
+    if (!shotUrl) return;
+    const a = document.createElement('a');
+    a.href = shotUrl;
+    a.download = 'desktop-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+  $('btnShotClose').addEventListener('click', () => { shotModal.style.display = 'none'; });
+  shotModal.addEventListener('click', (e) => {
+    if (e.target === shotModal) shotModal.style.display = 'none';
+  });
 
   // ---- 键盘：桌面端物理键盘 & 移动端系统软键盘 ----
   const kbInput = $('kbInput');

@@ -1,9 +1,10 @@
 /**
- * QwenPaw Web 远程桌面 v0.1.0 — 前端 GUI
+ * QwenPaw Web 远程桌面 v0.1.1 — 前端 GUI
  * （qwenpaw.platform.agentscope.io 专用插件）
  *
  * 纯桌面视图：iframe 内嵌自定义 noVNC 页面（/api/qwenpaw-desktop/desktop_page）。
- * 无浏览器工具栏；桌面右下角竖排快捷入口（GitHub/Google/Bing/百度/终端/文件）。
+ * 无浏览器工具栏；桌面右下角竖排快捷入口（GitHub/Google/Bing/百度/终端/文件），
+ * 右下工具含 📷 截图与 📋 剪贴板互通。
  * 底部仅保留最小状态条（桌面状态 + 重连 + 关闭桌面）。
  * 桌面端物理键盘直接可用，移动端点击画面唤起系统软键盘。
  */
@@ -21,7 +22,7 @@
 
   var PLUGIN_ID = "qwenpaw-desktop";
   var PLUGIN_NAME = "远程桌面";
-  var VERSION = "0.1.0";
+  var VERSION = "0.1.1";
 
   // ---------- 样式（GitHub Dark，最小化） ----------
   var C = {

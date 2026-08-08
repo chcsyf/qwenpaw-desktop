@@ -1,5 +1,5 @@
 """
-QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.0
+QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.1
 （qwenpaw.platform.agentscope.io 专用插件）
 
 在 QwenPaw 界面内实时查看**服务器上的虚拟桌面**，鼠标/键盘操作完整映射到远程
@@ -15,6 +15,8 @@ QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.0
 界面：
   - 纯桌面视图（无浏览器工具栏），桌面右下角竖排快捷入口
     （GitHub / Google / Bing / 百度 / 终端 / 文件）
+  - 右下工具：快捷入口 / 📷 一键截图 / 📋 粘贴到远程 / 重连 / 关闭桌面
+  - 剪贴板互通：远程复制 → 自动写入本地剪贴板；本地复制 → 📋 粘贴到远程
   - 底部最小状态条：连接状态、重连、关闭桌面
   - 桌面端物理键盘直接可用；远程 X 桌面强制开启 NumLock，
     保证 noVNC 右侧数字小键盘（KP_ 系列 keysym）正常工作
@@ -32,6 +34,7 @@ QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.0
 import asyncio
 import logging
 import os
+import shutil
 import socket
 import subprocess
 import time
@@ -39,7 +42,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -47,7 +50,7 @@ from qwenpaw.pawapp import PawApp
 
 logger = logging.getLogger(__name__)
 
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.1.1"
 PLUGIN_NAME = "远程桌面"
 PLUGIN_ID = "qwenpaw-desktop"
 
@@ -197,6 +200,141 @@ def _stop_desktop():
     _started_at = None
 
 
+# ---------- 截图 ----------
+
+SHOT_DIR = Path("/tmp/qwenpaw-desktop-shots")
+
+
+def _capture_screen_png() -> bytes:
+    """截取远程桌面当前屏幕，返回 PNG 字节。
+
+    优先用 scrot（ImageMagick 的 import 在部分环境缺失）。
+    需要 DISPLAY 指向虚拟屏幕 :99。
+    """
+    _ensure_desktop()
+    scrot = shutil.which("scrot")
+    if scrot is None:
+        raise RuntimeError("服务器缺少 scrot，无法截图（请先安装：apt install scrot）")
+    SHOT_DIR.mkdir(parents=True, exist_ok=True)
+    out = SHOT_DIR / "shot.png"
+    try:
+        env = dict(os.environ)
+        env["DISPLAY"] = DISPLAY
+        subprocess.run(
+            [scrot, "-d", "0", "-o", str(out)],
+            env=env, timeout=10,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        data = out.read_bytes()
+        if not data:
+            raise RuntimeError("截图失败（scrot 输出为空）")
+        return data
+    finally:
+        try:
+            out.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _save_screenshot(png: bytes) -> Path:
+    """把截图保存到平台公共数据目录 plugin_data/screenshots/。
+
+    plugin_data 位于 QwenPaw 根目录（NAS 持久层）下，是**插件公共数据区**：
+    - 公共：不属于任何单个智能体工作区（app 是公共的）
+    - 持久：NAS 层，容器重启不丢
+    - 平台不碰：不同于 plugins/（安装目录）与 plugin_runtime/（依赖+锁的
+      缓存目录），plugin_data 不会被平台管理逻辑清理或重建
+    目录不存在时自动创建；解析失败时 fallback 到 /tmp。
+    """
+    try:
+        from qwenpaw.constant import WORKING_DIR
+
+        data_root = Path(WORKING_DIR) / "plugin_data"
+    except Exception:  # noqa: BLE001
+        logger.warning("[qwenpaw-desktop] WORKING_DIR unavailable, fallback to /tmp",
+                       exc_info=True)
+        data_root = Path("/tmp")
+    save_dir = data_root / "screenshots"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"desktop-{time.strftime('%Y%m%d-%H%M%S')}.png"
+    fpath = save_dir / fname
+    fpath.write_bytes(png)
+    return fpath
+
+
+# ---------- 剪贴板（X11 selection + xclip，UTF-8） ----------
+
+# 说明：noVNC 的 VNC 剪贴板协议是 Latin-1 编码（x11vnc 0.9.16 不支持
+# extended clipboard / UTF-8），中文会乱码；且 x11vnc 会把 PRIMARY
+# selection（鼠标选中即写入）也发给客户端，造成"选中就自动复制"。
+# 这里绕开 VNC 剪贴板，直接用 xclip 读写远程 X 桌面的 CLIPBOARD selection：
+#   - 只读写 CLIPBOARD（Ctrl+C 语义），不碰 PRIMARY，解决"选中即复制"
+#   - xclip 按 UTF-8 存取，中文无乱码
+#   - 写入后由前端/后端触发 Ctrl+V，完成"粘贴"动作
+
+
+def _clip_env() -> dict:
+    env = dict(os.environ)
+    env["DISPLAY"] = DISPLAY
+    return env
+
+
+def _read_clipboard() -> str:
+    """读取远程 X 桌面 CLIPBOARD selection 文本（UTF-8）。"""
+    xclip = shutil.which("xclip")
+    if xclip is None:
+        raise RuntimeError("服务器缺少 xclip，无法读写剪贴板（apt install xclip）")
+    try:
+        out = subprocess.run(
+            [xclip, "-o", "-selection", "clipboard"],
+            env=_clip_env(), capture_output=True, timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        # 没有 owner 时 xclip -o 可能挂起等待；超时视为空剪贴板
+        return ""
+    if out.returncode != 0:
+        return ""
+    return out.stdout.decode("utf-8", errors="replace")
+
+
+def _write_clipboard(text: str) -> None:
+    """把文本写入远程 X 桌面 CLIPBOARD selection（UTF-8）。
+
+    xclip -i 进程保持存活以持有 selection（直到被下次写入替换）。
+    """
+    xclip = shutil.which("xclip")
+    if xclip is None:
+        raise RuntimeError("服务器缺少 xclip，无法读写剪贴板（apt install xclip）")
+    proc = subprocess.Popen(
+        [xclip, "-i", "-selection", "clipboard"],
+        env=_clip_env(),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        proc.communicate(text.encode("utf-8"), timeout=5)
+    except Exception:  # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+
+
+def _paste_into_desktop() -> None:
+    """向远程桌面当前焦点窗口发送 Ctrl+V（配合 selection 完成粘贴）。"""
+    xdotool = shutil.which("xdotool")
+    if xdotool is None:
+        raise RuntimeError("服务器缺少 xdotool（apt install xdotool）")
+    subprocess.run(
+        [xdotool, "key", "ctrl+v"],
+        env=_clip_env(), timeout=5,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
 # ---------- 桌面应用 ----------
 
 def _normalize_url(raw: str) -> str:
@@ -342,6 +480,62 @@ async def close_desktop():
     """手动关闭桌面，释放资源；下次操作自动重启。"""
     _stop_desktop()
     return {"ok": True, "message": "远程桌面已关闭，资源已释放；下次打开会自动重启"}
+
+
+@router.get("/screenshot")
+async def screenshot():
+    """截取远程桌面当前屏幕，返回 PNG 图片。"""
+    try:
+        png = await asyncio.to_thread(_capture_screen_png)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[qwenpaw-desktop] screenshot failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/screenshot/save")
+async def screenshot_save():
+    """截屏并保存到平台公共数据目录 plugin_data/screenshots/，返回保存路径。"""
+    try:
+        png = await asyncio.to_thread(_capture_screen_png)
+        fpath = await asyncio.to_thread(_save_screenshot, png)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[qwenpaw-desktop] screenshot save failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "path": str(fpath), "name": fpath.name}
+
+
+@router.get("/clipboard/read")
+async def clipboard_read():
+    """读取远程桌面 CLIPBOARD selection 文本（UTF-8，只读 Ctrl+C 复制的）。"""
+    try:
+        await asyncio.to_thread(_ensure_desktop)
+        text = await asyncio.to_thread(_read_clipboard)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[qwenpaw-desktop] clipboard read failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "text": text}
+
+
+class ClipboardWriteRequest(BaseModel):
+    text: str
+
+
+@router.post("/clipboard/write")
+async def clipboard_write(req: ClipboardWriteRequest):
+    """把文本写入远程 CLIPBOARD selection，并自动 Ctrl+V 粘贴到当前焦点。"""
+    try:
+        await asyncio.to_thread(_ensure_desktop)
+        await asyncio.to_thread(_write_clipboard, req.text)
+        await asyncio.to_thread(_paste_into_desktop)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[qwenpaw-desktop] clipboard write failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "message": "已写入远程剪贴板并触发粘贴"}
 
 
 # ---------- WebSocket：VNC 转发（同源） ----------

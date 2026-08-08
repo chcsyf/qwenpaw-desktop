@@ -1,4 +1,4 @@
-# qwenpaw-desktop — Web 远程桌面插件 v0.1.0
+# qwenpaw-desktop — Web 远程桌面插件 v0.1.1
 
 > **专用于 qwenpaw.platform.agentscope.io 平台**。打开入口：**应用 → 远程桌面** 🖥️
 
@@ -10,6 +10,8 @@
 ## 功能
 
 - 纯桌面视图（无浏览器工具栏），右下角竖排快捷入口：GitHub / Google / Bing / 百度 / 终端 / 文件
+- 📷 **一键截图**：截取远程桌面当前画面，预览 / 下载 PNG / 保存到平台公共数据目录 `plugin_data/screenshots/`（公共持久，不属于某个智能体）
+- 📋 **剪贴板互通**：远程桌面复制 → 自动写入本地剪贴板；点「📋」把本地剪贴板一键粘贴到远程
 - 底部最小状态条：连接状态、重连、关闭桌面
 - 桌面端物理键盘直接可用；远程 X 桌面强制开启 NumLock，数字小键盘正常
 - 适合访问本地打不开的网站（如 github）：在服务器桌面里以 chromium 窗口打开
@@ -29,6 +31,7 @@
 # xfce4-terminal 终端快捷入口
 # thunar 文件管理器快捷入口
 # chromium 浏览器（打开 URL）
+# scrot 截图（📷 一键截图功能）
 apt-get install -y \
   xvfb \
   openbox \
@@ -38,7 +41,8 @@ apt-get install -y \
   novnc \
   xfce4-terminal \
   thunar \
-  chromium
+  chromium \
+  scrot
 ```
 
 > Debian/Ubuntu 的包名即上述名称（`x11-xserver-utils` 提供 `xset`）。
