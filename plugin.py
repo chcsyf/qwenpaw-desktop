@@ -6,7 +6,7 @@ QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.1
 桌面（noVNC 客户端 + Xvfb 虚拟屏幕 + openbox 窗口管理器 + x11vnc）。
 
 架构：
-  Xvfb :99（虚拟屏幕 1440x900）
+  Xvfb :99（虚拟屏幕，默认 1440x900，可切换 1280x720 / 1920x1080）
     ├─ openbox（窗口管理器，窗口可拖拽/缩放）
     └─ x11vnc :99 -rfbport 5900（VNC 服务，仅监听 127.0.0.1）
         └─ 插件内置 WebSocket 转发 /api/qwenpaw-desktop/vnc ⇄ localhost:5900
@@ -15,8 +15,14 @@ QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.1
 界面：
   - 纯桌面视图（无浏览器工具栏），桌面右下角竖排快捷入口
     （GitHub / Google / Bing / 百度 / 终端 / 文件）
-  - 右下工具：快捷入口 / 📷 一键截图 / 📋 粘贴到远程 / 重连 / 关闭桌面
-  - 剪贴板互通：远程复制 → 自动写入本地剪贴板；本地复制 → 📋 粘贴到远程
+  - 右下工具：快捷入口 / 📷 一键截图 / 📋 粘贴到远程 / 🖥 分辨率切换 / 重连 / 关闭桌面
+  - 📷 一键截图：截取当前画面，预览 / 下载 PNG / 保存到平台公共数据目录
+    plugin_data/screenshots/（公共持久，不属于某个智能体）
+  - 剪贴板互通（xclip 读写远程 CLIPBOARD selection，UTF-8 中文无乱码）：
+    远程 Ctrl+C 复制 → 自动写入本地剪贴板；本地复制 → 📋 写入远程并自动粘贴
+    （终端类窗口自动用 Ctrl+Shift+V，其他用 Ctrl+V；不碰 PRIMARY，
+    因此不会"选中文字就自动复制"）
+  - 🖥 分辨率切换：1280x720 / 1440x900（默认）/ 1920x1080，重启桌面栈生效
   - 底部最小状态条：连接状态、重连、关闭桌面
   - 桌面端物理键盘直接可用；远程 X 桌面强制开启 NumLock，
     保证 noVNC 右侧数字小键盘（KP_ 系列 keysym）正常工作
@@ -55,7 +61,12 @@ PLUGIN_NAME = "远程桌面"
 PLUGIN_ID = "qwenpaw-desktop"
 
 DISPLAY = ":99"
-SCREEN_SIZE = "1440x900x24"
+SCREEN_SIZE = "1440x900x24"  # 默认屏幕尺寸（可通过 /resolution 运行时切换）
+SCREEN_PRESETS = [
+    {"label": "1280x720", "width": 1280, "height": 720},
+    {"label": "1440x900", "width": 1440, "height": 900},
+    {"label": "1920x1080", "width": 1920, "height": 1080},
+]
 VNC_HOST = "127.0.0.1"
 VNC_PORT = 5900
 NOVNC_DIR = "/usr/share/novnc"
@@ -80,6 +91,21 @@ DESKTOP_APPS = {
 # 全局单例状态
 _started_at = None
 _procs = {}  # name -> subprocess.Popen
+# 当前生效的屏幕尺寸（可变，支持运行时切换分辨率）
+_screen_size = SCREEN_SIZE
+
+
+def _current_screen() -> str:
+    """当前生效的屏幕尺寸（如 1440x900x24）。"""
+    return _screen_size
+
+
+def _set_screen(w: int, h: int) -> None:
+    """切换虚拟屏幕分辨率：重启桌面栈使新尺寸生效。"""
+    global _screen_size
+    _stop_desktop()
+    _screen_size = f"{w}x{h}x24"
+    _ensure_desktop()
 
 
 # ---------- 子进程管理 ----------
@@ -143,9 +169,9 @@ def _ensure_desktop():
     global _started_at
     if _is_alive("xvfb") and _is_alive("x11vnc") and _vnc_ready():
         return
-    # Xvfb 虚拟屏幕
+    # Xvfb 虚拟屏幕（用当前生效的屏幕尺寸，支持运行时切换分辨率）
     if not _is_alive("xvfb"):
-        _popen(["Xvfb", DISPLAY, "-screen", "0", SCREEN_SIZE, "-nolisten", "tcp"], "xvfb")
+        _popen(["Xvfb", DISPLAY, "-screen", "0", _screen_size, "-nolisten", "tcp"], "xvfb")
         time.sleep(1.5)
     # openbox 窗口管理器（失败不影响核心功能，但窗口不能拖动）
     if not _is_alive("openbox"):
@@ -315,6 +341,8 @@ def _write_clipboard(text: str) -> None:
     )
     try:
         proc.communicate(text.encode("utf-8"), timeout=5)
+        # 等 selection 就绪（xclip 进程持有 owner），避免紧接的 Ctrl+V 读不到
+        time.sleep(0.3)
     except Exception:  # noqa: BLE001
         try:
             proc.kill()
@@ -324,12 +352,30 @@ def _write_clipboard(text: str) -> None:
 
 
 def _paste_into_desktop() -> None:
-    """向远程桌面当前焦点窗口发送 Ctrl+V（配合 selection 完成粘贴）。"""
+    """向远程桌面当前焦点窗口发送粘贴快捷键（配合 selection 完成粘贴）。
+
+    终端类应用（xfce4-terminal 等）的粘贴是 Ctrl+Shift+V，普通图形应用
+    （chromium、文本编辑器等）是 Ctrl+V —— 按焦点窗口名智能选择。
+    """
     xdotool = shutil.which("xdotool")
     if xdotool is None:
         raise RuntimeError("服务器缺少 xdotool（apt install xdotool）")
+    combo = "ctrl+v"
+    try:
+        out = subprocess.run(
+            ["xdotool", "getactivewindow", "getwindowname"],
+            env=_clip_env(), capture_output=True, text=True, timeout=5,
+        )
+        name = (out.stdout or "").strip().lower()
+        if any(k in name for k in (
+            "terminal", "终端", "xfce4-terminal", "konsole",
+            "gnome-terminal", "bash", "zsh", "tty",
+        )):
+            combo = "ctrl+shift+v"
+    except Exception:  # noqa: BLE001
+        logger.debug("[qwenpaw-desktop] window name lookup failed", exc_info=True)
     subprocess.run(
-        [xdotool, "key", "ctrl+v"],
+        [xdotool, "key", combo],
         env=_clip_env(), timeout=5,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
@@ -440,7 +486,7 @@ async def get_status():
         "version": PLUGIN_VERSION,
         "type": "desktop",
         "display": DISPLAY,
-        "screen": SCREEN_SIZE,
+        "screen": _current_screen(),
         "vnc_port": VNC_PORT,
         "running": _vnc_ready(),
         "started_at": _started_at,
@@ -453,6 +499,34 @@ async def get_status():
             "auto_restart": True,
         },
     }
+
+
+@router.get("/resolutions")
+async def list_resolutions():
+    """返回可选分辨率列表与当前生效分辨率。"""
+    return {
+        "ok": True,
+        "current": _current_screen(),
+        "presets": SCREEN_PRESETS,
+    }
+
+
+class ResolutionRequest(BaseModel):
+    width: int
+    height: int
+
+
+@router.post("/resolution")
+async def set_resolution(req: ResolutionRequest):
+    """切换虚拟屏幕分辨率（重启桌面栈生效，已打开的窗口会关闭）。"""
+    if (req.width, req.height) not in [(p["width"], p["height"]) for p in SCREEN_PRESETS]:
+        raise HTTPException(status_code=400, detail="不支持的分辨率")
+    try:
+        await asyncio.to_thread(_set_screen, req.width, req.height)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[qwenpaw-desktop] set resolution failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "screen": _current_screen(), "message": f"分辨率已切换为 {req.width}x{req.height}"}
 
 
 @router.post("/open")

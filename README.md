@@ -2,7 +2,7 @@
 
 > **专用于 qwenpaw.platform.agentscope.io 平台**。打开入口：**应用 → 远程桌面** 🖥️
 
-![qwenpaw-desktop 预览](qwenpaw-desktop-0.1.0.png)
+![qwenpaw-desktop 预览](qwenpaw-desktop-preview.png)
 
 在 QwenPaw 界面内实时查看**服务器上的虚拟桌面**，鼠标/键盘操作完整映射到远程
 桌面（noVNC 客户端 + Xvfb 虚拟屏幕 + openbox 窗口管理器 + x11vnc）。
@@ -11,7 +11,9 @@
 
 - 纯桌面视图（无浏览器工具栏），右下角竖排快捷入口：GitHub / Google / Bing / 百度 / 终端 / 文件
 - 📷 **一键截图**：截取远程桌面当前画面，预览 / 下载 PNG / 保存到平台公共数据目录 `plugin_data/screenshots/`（公共持久，不属于某个智能体）
-- 📋 **剪贴板互通**：远程桌面复制 → 自动写入本地剪贴板；点「📋」把本地剪贴板一键粘贴到远程
+- 📋 **剪贴板互通（UTF-8，中文无乱码）**：远程桌面 Ctrl+C 复制 → 自动写入本地剪贴板；点「📋」把本地剪贴板内容写入远程并自动粘贴（终端类窗口自动用 Ctrl+Shift+V，其他用 Ctrl+V）
+  - 实现：绕开 VNC 剪贴板协议（Latin-1 编码，中文会乱码），改用 xclip 直接读写远程 X 桌面的 **CLIPBOARD** selection（UTF-8）；只读 CLIPBOARD 不碰 PRIMARY，因此**不会**出现"鼠标选中文字就自动复制"
+- 🖥 **分辨率切换**：1280x720 / 1440x900（默认）/ 1920x1080 一键切换（重启桌面栈生效）
 - 底部最小状态条：连接状态、重连、关闭桌面
 - 桌面端物理键盘直接可用；远程 X 桌面强制开启 NumLock，数字小键盘正常
 - 适合访问本地打不开的网站（如 github）：在服务器桌面里以 chromium 窗口打开
@@ -32,6 +34,7 @@
 # thunar 文件管理器快捷入口
 # chromium 浏览器（打开 URL）
 # scrot 截图（📷 一键截图功能）
+# xclip 剪贴板互通（📋 读写远程 CLIPBOARD selection，UTF-8 中文无乱码）
 apt-get install -y \
   xvfb \
   openbox \
@@ -42,7 +45,8 @@ apt-get install -y \
   xfce4-terminal \
   thunar \
   chromium \
-  scrot
+  scrot \
+  xclip
 ```
 
 > Debian/Ubuntu 的包名即上述名称（`x11-xserver-utils` 提供 `xset`）。
@@ -80,7 +84,7 @@ baidu.png）。`/api/qwenpaw-desktop/icon` 路由**优先从插件自带目录�
 ## 架构与安全
 
 ```
-Xvfb :99（1440x900）
+Xvfb :99（默认 1440x900，可切换 1280x720 / 1920x1080）
   ├─ openbox
   └─ x11vnc :99 -rfbport 5900（仅 127.0.0.1）
       └─ 插件 WS 转发 /api/qwenpaw-desktop/vnc ⇄ localhost:5900

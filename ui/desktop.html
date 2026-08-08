@@ -83,6 +83,26 @@
   #shotModal button:hover { background: #30363d; }
   #shotModal button.primary { background: #238636; border-color: #2ea043; }
   #shotModal button.primary:hover { background: #2ea043; }
+
+  /* ---- 分辨率菜单 ---- */
+  #resMenu {
+    position: absolute; right: 10px; bottom: 56px; z-index: 80;
+    display: none; flex-direction: column; gap: 2px;
+    padding: 6px; min-width: 150px;
+    background: rgba(22,27,34,.95);
+    border: 1px solid #30363d; border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.45);
+  }
+  #resMenu .res-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 6px;
+    color: #e6edf3; font-size: 12px; cursor: pointer;
+    border: 1px solid transparent;
+  }
+  #resMenu .res-item:hover { background: rgba(255,255,255,.1); }
+  #resMenu .res-item.cur { color: #3fb950; }
+  #resMenu .res-item .mark { width: 14px; text-align: center; flex-shrink: 0; }
+  #resMenu .res-label { flex: 1; }
 </style>
 </head>
 <body>
@@ -102,11 +122,15 @@
 <!-- 右下工具 -->
 <div id="tools">
   <button class="tb" id="btnDock" title="快捷入口">☰</button>
+  <button class="tb" id="btnRes" title="分辨率">🖥</button>
   <button class="tb" id="btnShot" title="截图当前桌面">📷</button>
   <button class="tb" id="btnPaste" title="粘贴本地剪贴板到远程">📋</button>
   <button class="tb" id="btnReload" title="重新连接">⟳</button>
   <button class="tb" id="btnClose" title="关闭桌面">⏻</button>
 </div>
+
+<!-- 分辨率菜单 -->
+<div id="resMenu"></div>
 
 <!-- 截图预览弹窗 -->
 <div id="shotModal">
@@ -260,6 +284,57 @@
   shotModal.addEventListener('click', (e) => {
     if (e.target === shotModal) shotModal.style.display = 'none';
   });
+
+  // ---- 🖥 分辨率切换 ----
+  const resMenu = $('resMenu');
+  let resLoaded = false;
+  async function renderResMenu() {
+    if (resLoaded) return;
+    try {
+      const r = await fetch('/api/qwenpaw-desktop/resolutions');
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || j.detail || ('HTTP ' + r.status));
+      resLoaded = true;
+      const cur = (j.current || '').split('x')[0] + 'x' + (j.current || '').split('x')[1];
+      resMenu.innerHTML = '';
+      (j.presets || []).forEach((p) => {
+        const label = p.label + ' (' + (p.width * p.height / 1000000).toFixed(1) + 'MP)';
+        const item = document.createElement('div');
+        item.className = 'res-item' + (p.label === cur ? ' cur' : '');
+        item.innerHTML = '<span class="mark">' + (p.label === cur ? '✓' : '') + '</span>' +
+          '<span class="res-label">' + label + '</span>';
+        item.addEventListener('click', async () => {
+          resMenu.style.display = 'none';
+          try {
+            const rr = await fetch('/api/qwenpaw-desktop/resolution', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ width: p.width, height: p.height }),
+            });
+            const jj = await rr.json();
+            if (!rr.ok || !jj.ok) throw new Error(jj.error || jj.detail || ('HTTP ' + rr.status));
+            toast(jj.message + '，正在重连…');
+            setTimeout(() => location.reload(), 1500);
+          } catch (e) {
+            toast('分辨率切换失败: ' + e.message);
+          }
+        });
+        resMenu.appendChild(item);
+      });
+    } catch (e) {
+      toast('分辨率列表加载失败: ' + e.message);
+    }
+  }
+  $('btnRes').addEventListener('click', () => {
+    const show = resMenu.style.display !== 'flex';
+    resMenu.style.display = show ? 'flex' : 'none';
+    if (show) renderResMenu();
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (resMenu.style.display === 'flex' && !resMenu.contains(e.target) && e.target.id !== 'btnRes') {
+      resMenu.style.display = 'none';
+    }
+  }, true);
 
   // ---- 键盘：桌面端物理键盘 & 移动端系统软键盘 ----
   const kbInput = $('kbInput');
