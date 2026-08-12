@@ -99,3 +99,7 @@ Xvfb :99（默认 1440x900，可切换 1280x720 / 1920x1080）
 - 首次连接 / 打开 URL / 启动应用时懒启动 Xvfb + openbox + x11vnc（单例幂等）
 - 界面可手动「关闭桌面」释放资源；下次操作自动重启
 - 插件主服务退出时 shutdown hook 自动清理子进程
+
+## 变更记录
+
+见 [CHANGELOG.md](https://github.com/chcsyf/qwenpaw-desktop/blob/main/CHANGELOG.md)。
