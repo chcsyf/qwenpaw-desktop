@@ -2,7 +2,7 @@
 
 > **专用于 qwenpaw.platform.agentscope.io 平台**。打开入口：**应用 → 远程桌面** 🖥️
 
-![qwenpaw-desktop 预览](qwenpaw-desktop-preview.png)
+![qwenpaw-desktop 预览](https://raw.githubusercontent.com/chcsyf/qwenpaw-desktop/main/qwenpaw-desktop-preview.png)
 
 在 QwenPaw 界面内实时查看**服务器上的虚拟桌面**，鼠标/键盘操作完整映射到远程
 桌面（noVNC 客户端 + Xvfb 虚拟屏幕 + openbox 窗口管理器 + x11vnc）。
