@@ -1,5 +1,5 @@
 """
-QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.1
+QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.2
 （qwenpaw.platform.agentscope.io 专用插件）
 
 在 QwenPaw 界面内实时查看**服务器上的虚拟桌面**，鼠标/键盘操作完整映射到远程
@@ -56,7 +56,7 @@ from qwenpaw.pawapp import PawApp
 
 logger = logging.getLogger(__name__)
 
-PLUGIN_VERSION = "0.1.1"
+PLUGIN_VERSION = "0.1.2"
 PLUGIN_NAME = "远程桌面"
 PLUGIN_ID = "qwenpaw-desktop"
 
@@ -463,7 +463,9 @@ async def get_desktop_page():
     """返回自定义 noVNC 页面（纯桌面，无浏览器工具栏）。"""
     if not DESKTOP_HTML.exists():
         raise HTTPException(status_code=404, detail="desktop.html 未找到")
-    return FileResponse(str(DESKTOP_HTML), media_type="text/html")
+    # no-store：前端迭代频繁，避免浏览器缓存旧页面
+    return FileResponse(str(DESKTOP_HTML), media_type="text/html",
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get("/icon")

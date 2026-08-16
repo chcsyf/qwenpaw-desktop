@@ -52,6 +52,76 @@
     display: flex; align-items: center; justify-content: center;
   }
   .tb:hover { background: #21262d; }
+  .tb.active { background: #21262d; border-color: #3fb950; }
+
+  /* ---- 粘贴板面板 ---- */
+  #clipPanel {
+    position: absolute; right: 10px; bottom: 56px; z-index: 75;
+    width: 340px; max-height: 300px;
+    background: rgba(22,27,34,.96); border: 1px solid #30363d;
+    border-radius: 10px; display: none; flex-direction: column;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5); overflow: hidden;
+  }
+  #clipPanel .cp-head {
+    padding: 8px 12px 4px; font-size: 12px; color: #e6edf3;
+    border-bottom: 1px solid #30363d; background: rgba(1,4,9,.4);
+  }
+  #clipPanel .cp-tips {
+    padding: 4px 12px 6px; border-bottom: 1px solid #30363d;
+    background: rgba(1,4,9,.25);
+  }
+  #clipPanel .cp-tips div {
+    color: #8b949e; font-size: 10px; line-height: 1.7;
+  }
+  #clipPanel .cp-edit { padding: 6px 10px; border-bottom: 1px solid #30363d; }
+  #clipPanel .cp-edit textarea {
+    width: 100%; box-sizing: border-box; resize: none;
+    background: #0d1117; color: #e6edf3; border: 1px solid #30363d;
+    border-radius: 6px; padding: 5px 8px; font-size: 12px; outline: none;
+    min-height: 30px; max-height: 80px; overflow-y: auto;
+    font-family: inherit; line-height: 1.6;
+  }
+  #clipPanel .cp-edit textarea:focus { border-color: #3fb950; }
+  #clipPanel .cp-list { overflow-y: auto; max-height: 190px; }
+  #clipPanel .cp-list::-webkit-scrollbar,
+  #clipPanel .cp-edit textarea::-webkit-scrollbar {
+    width: 8px; height: 8px;
+  }
+  #clipPanel .cp-list::-webkit-scrollbar-track,
+  #clipPanel .cp-edit textarea::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  #clipPanel .cp-list::-webkit-scrollbar-thumb,
+  #clipPanel .cp-edit textarea::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.2); border-radius: 4px;
+  }
+  #clipPanel .cp-list::-webkit-scrollbar-thumb:hover,
+  #clipPanel .cp-edit textarea::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.3);
+  }
+  #clipPanel .cp-list::-webkit-scrollbar-corner,
+  #clipPanel .cp-edit textarea::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  #clipPanel .cp-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; cursor: pointer; border-bottom: 1px solid rgba(48,54,61,.5);
+  }
+  #clipPanel .cp-item:hover { background: #21262d; }
+  #clipPanel .cp-src {
+    flex-shrink: 0; font-size: 10px; padding: 2px 6px; border-radius: 4px;
+  }
+  #clipPanel .cp-src.remote { background: rgba(63,185,80,.15); color: #3fb950; }
+  #clipPanel .cp-src.local { background: rgba(88,166,255,.15); color: #58a6ff; }
+  #clipPanel .cp-text {
+    flex: 1; font-size: 12px; color: #e6edf3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    line-height: 1.5;
+  }
+  #clipPanel .cp-empty {
+    padding: 16px 12px; text-align: center; color: #8b949e; font-size: 12px;
+  }
+
   #kbInput { position: fixed; left: -9999px; width: 1px; height: 1px; opacity: 0; }
 
   /* 提示 toast */
@@ -83,6 +153,33 @@
   #shotModal button:hover { background: #30363d; }
   #shotModal button.primary { background: #238636; border-color: #2ea043; }
   #shotModal button.primary:hover { background: #2ea043; }
+
+  /* ---- 关闭桌面确认弹窗 ---- */
+  #closeModal {
+    position: fixed; inset: 0; z-index: 210;
+    background: rgba(1,4,9,.82);
+    display: none; align-items: center; justify-content: center;
+  }
+  #closeModal .close-box {
+    width: 320px;
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 20px 24px 16px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  }
+  #closeModal .close-title {
+    color: #e6edf3; font-size: 15px; font-weight: 600; margin-bottom: 8px;
+  }
+  #closeModal .close-desc {
+    color: #8b949e; font-size: 12px; line-height: 1.6; margin-bottom: 18px;
+  }
+  #closeModal .close-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  #closeModal .close-actions button {
+    background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+    border-radius: 8px; padding: 6px 16px; font-size: 12px; cursor: pointer;
+  }
+  #closeModal .close-actions button:hover { background: #30363d; }
+  #closeModal .close-actions button.danger { background: #da3633; border-color: #da3633; color: #fff; }
+  #closeModal .close-actions button.danger:hover { background: #f85149; }
 
   /* ---- 分辨率菜单 ---- */
   #resMenu {
@@ -120,13 +217,29 @@
 </div>
 
 <!-- 右下工具 -->
-<div id="tools">
+<div id="tools" style="display:none">
   <button class="tb" id="btnDock" title="快捷入口">☰</button>
   <button class="tb" id="btnRes" title="分辨率">🖥</button>
   <button class="tb" id="btnShot" title="截图当前桌面">📷</button>
-  <button class="tb" id="btnPaste" title="粘贴本地剪贴板到远程">📋</button>
+  <button class="tb" id="btnPaste" title="打开粘贴板">📋</button>
   <button class="tb" id="btnReload" title="重新连接">⟳</button>
   <button class="tb" id="btnClose" title="关闭桌面">⏻</button>
+</div>
+
+<!-- 粘贴板面板 -->
+<div id="clipPanel">
+  <div class="cp-head">粘贴板</div>
+  <div class="cp-tips">
+    <div>· 远端复制自动加入粘贴板</div>
+    <div>· 点击条目自动复制到本地粘贴板并移动到粘贴板第一条</div>
+    <div>· 本地复制自动读入到粘贴板</div>
+    <div>· 桌面内 Ctrl+V 默认填入粘贴板第一条</div>
+  </div>
+  <div class="cp-edit">
+    <textarea id="clipInput" placeholder="输入文字，回车后自动加入粘贴板" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+  </div>
+  <div class="cp-list" id="clipList"></div>
+  <div class="cp-empty" id="clipEmpty">暂无内容 — 远程 Ctrl+C 或本地复制后自动收录</div>
 </div>
 
 <!-- 分辨率菜单 -->
@@ -139,6 +252,18 @@
     <button id="btnShotSave" class="primary">保存到公共区</button>
     <button id="btnShotDownload">下载 PNG</button>
     <button id="btnShotClose">关闭</button>
+  </div>
+</div>
+
+<!-- 关闭桌面确认弹窗 -->
+<div id="closeModal">
+  <div class="close-box">
+    <div class="close-title">关闭远程桌面</div>
+    <div class="close-desc">确定要关闭远程桌面吗？关闭后当前连接将断开，已保存的文件不受影响。</div>
+    <div class="close-actions">
+      <button id="btnCloseCancel">取消</button>
+      <button id="btnCloseConfirm" class="danger">确认关闭</button>
+    </div>
   </div>
 </div>
 
@@ -186,57 +311,165 @@
   rfb.scaleViewport = true;
   rfb.resizeSession = false;
 
-  // ---- 剪贴板互通（X11 CLIPBOARD + xclip，UTF-8） ----
-  // 不监听 noVNC 的 clipboard 事件：VNC 剪贴板协议是 Latin-1，中文会乱码，
-  // 且 x11vnc 会把 PRIMARY（鼠标选中即复制）也发过来，造成"选中就复制"。
-  // 改为轮询后端读远程 CLIPBOARD selection（Ctrl+C 复制的，UTF-8）。
-  let lastClipboard = null;
+  // ---- 粘贴板（双向剪贴板暂存，X11 CLIPBOARD + xclip，UTF-8） ----
+  // 交互：
+  //   - 远程 Ctrl+C → 条目进粘贴板（不再自动覆盖本地剪贴板），点击条目复制到本地
+  //   - 本地复制 → 自动读入粘贴板，点击条目或按 Ctrl+V 填入远程（写远程+自动粘贴）
+  //   - 重复数据检测：相同文本只保留一条（自动移到顶部）
+  const clipItems = [];            // { text, src: 'remote'|'local' }
+  const MAX_CLIP = 10;
+  let lastRemoteClip = null;       // 远程剪贴板变化检测
+  let lastLocalClip = null;        // 本地剪贴板变化检测
+  let localWriteTs = 0;            // 程序写入本地剪贴板的时间戳（防回读循环）
+  let localWriteText = '';
+
+  function pushClipItem(text, src) {
+    if (!text || !text.trim()) return;
+    text = text.trim();
+    const idx = clipItems.findIndex(it => it.text === text);
+    if (idx >= 0) clipItems.splice(idx, 1);   // 去重：相同文本移除旧位再置顶
+    clipItems.unshift({ text, src });
+    if (clipItems.length > MAX_CLIP) clipItems.length = MAX_CLIP;
+    renderClipList();
+  }
+
+  function renderClipList() {
+    const list = $('clipList');
+    list.innerHTML = '';
+    clipItems.forEach(it => {
+      const d = document.createElement('div');
+      d.className = 'cp-item';
+      const tag = document.createElement('span');
+      tag.className = 'cp-src ' + it.src;
+      tag.textContent = it.src === 'remote' ? '⇠ 远端' : '⇢ 本地';
+      const t = document.createElement('span');
+      t.className = 'cp-text';
+      t.textContent = it.text.length > 80 ? it.text.slice(0, 80) + '…' : it.text;
+      d.title = it.text;
+      d.appendChild(tag);
+      d.appendChild(t);
+      d.addEventListener('click', () => onClipItemClick(it));
+      list.appendChild(d);
+    });
+    $('clipEmpty').style.display = clipItems.length ? 'none' : 'block';
+  }
+
+  function copyToLocalClipboard(text) {
+    return new Promise((resolve) => {
+      const ok = () => { localWriteTs = Date.now(); localWriteText = text; lastLocalClip = text; resolve(true); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(ok).catch(() => fallbackCopy(text, ok));
+      } else {
+        fallbackCopy(text, ok);
+      }
+    });
+  }
+  function fallbackCopy(text, done) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    done(ok);
+  }
+
+  async function sendToRemote(text) {
+    try {
+      const r = await fetch('/api/qwenpaw-desktop/clipboard/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      toast('已粘贴到远程桌面');
+    } catch (e) {
+      toast('粘贴失败: ' + e.message);
+    }
+  }
+
+  async function onClipItemClick(it) {
+    // 点击条目：统一复制到本地剪贴板，并移动到粘贴板第一条
+    const idx = clipItems.indexOf(it);
+    if (idx > 0) {
+      clipItems.splice(idx, 1);
+      clipItems.unshift(it);
+      renderClipList();
+    }
+    const ok = await copyToLocalClipboard(it.text);
+    toast(ok ? '已复制到本地剪贴板' : '写入本地剪贴板失败');
+  }
+
+  // 📋 面板展开/收起
+  let clipOpen = false;
+  $('btnPaste').addEventListener('click', () => {
+    clipOpen = !clipOpen;
+    $('clipPanel').style.display = clipOpen ? 'flex' : 'none';
+    $('btnPaste').classList.toggle('active', clipOpen);
+    if (clipOpen) renderClipList();
+  });
+
+  // 输入框：Enter 加入粘贴板（不直接发送）；Shift+Enter 换行
+  $('clipInput').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;   // Shift+Enter 换行
+    e.preventDefault();
+    const text = $('clipInput').value.trim();
+    if (!text) return;
+    pushClipItem(text, 'local');
+    $('clipInput').value = '';
+  });
+
+  // Ctrl+V：面板打开时自动填入第一条（最新条目）到远程，不分来源
+  // 用 capture 阶段监听：VNC 画布有焦点时 noVNC 会在 canvas 上 stopPropagation，
+  // 冒泡阶段收不到；capture 在事件到达 canvas 前拦截，同时阻止 noVNC 转发远程（防双粘贴）
+  document.addEventListener('keydown', (e) => {
+    if (!clipOpen) return;
+    if (!(e.ctrlKey || e.metaKey) || (e.key || '').toLowerCase() !== 'v') return;
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!clipItems.length) { toast('粘贴板为空'); return; }
+    const first = clipItems[0];
+    sendToRemote(first.text);
+  }, true);
+
+  // 远程剪贴板轮询：Ctrl+C → 条目进粘贴板（不自动写本地）
   var pollClipboard = function () {
     fetch('/api/qwenpaw-desktop/clipboard/read').then(function (r) { return r.json(); })
       .then(function (j) {
         if (!j.ok) return;
         var text = j.text || '';
-        if (text && text !== lastClipboard) {
-          lastClipboard = text;
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text)
-              .then(function () { toast('已复制远程内容到本地剪贴板'); })
-              .catch(function () { /* 无权限时忽略 */ });
-          }
+        if (text && text !== lastRemoteClip) {
+          lastRemoteClip = text;
+          pushClipItem(text, 'remote');
         }
       })
       .catch(function () { /* 忽略轮询错误 */ });
   };
-  // 首查 + 每 1.5s 轮询
+
+  // 本地剪贴板轮询：复制 → 自动读入粘贴板
+  var pollLocalClip = async function () {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.readText) return;
+      const text = await navigator.clipboard.readText();
+      if (!text) return;
+      // 跳过"点击远端条目写入本地"后的回读（2s 内相同文本）
+      if (Date.now() - localWriteTs < 2000 && text === localWriteText) return;
+      if (text !== lastLocalClip) {
+        lastLocalClip = text;
+        pushClipItem(text, 'local');
+      }
+    } catch (e) { /* 无权限/非安全上下文：静默，本地条目不可用 */ }
+  };
+
   setTimeout(pollClipboard, 1500);
   setInterval(pollClipboard, 1500);
-
-  // 📋 粘贴：本地剪贴板 → 写入远程 CLIPBOARD 并自动 Ctrl+V
-  $('btnPaste').addEventListener('click', async () => {
-    let text = '';
-    try {
-      if (navigator.clipboard && navigator.clipboard.readText) {
-        text = await navigator.clipboard.readText();
-      }
-    } catch (e) { /* 剪贴板读取无权限，走手动输入 */ }
-    if (!text) {
-      text = window.prompt('粘贴到远程桌面的文本：', '');
-    }
-    if (!text) return;
-    try {
-      const r = await fetch('/api/qwenpaw-desktop/clipboard/write', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text }),
-      });
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      lastClipboard = text;
-      toast('已粘贴到远程桌面');
-    } catch (e) {
-      toast('粘贴失败: ' + e.message);
-    }
-  });
+  setTimeout(pollLocalClip, 800);
+  setInterval(pollLocalClip, 1500);
 
   // ---- 📷 截图 ----
   const shotModal = $('shotModal');
@@ -382,17 +615,49 @@
 
   // ---- 重连 / 关闭 ----
   $('btnReload').addEventListener('click', () => location.reload());
-  $('btnClose').addEventListener('click', async () => {
+  // ⏻ 关闭：自定义确认弹窗（适配主题）
+  $('btnClose').addEventListener('click', () => {
+    $('closeModal').style.display = 'flex';
+  });
+  $('btnCloseCancel').addEventListener('click', () => {
+    $('closeModal').style.display = 'none';
+  });
+  $('btnCloseConfirm').addEventListener('click', async () => {
     try {
       const r = await fetch('/api/qwenpaw-desktop/close', { method: 'POST' });
       const j = await r.json();
       toast(j.message || '桌面已关闭');
+      $('closeModal').style.display = 'none';
       setTimeout(() => location.reload(), 1200);
-    } catch (e) { toast(String(e)); }
+    } catch (e) {
+      toast(String(e));
+      $('closeModal').style.display = 'none';
+    }
+  });
+  // 点击遮罩关闭
+  $('closeModal').addEventListener('click', (e) => {
+    if (e.target === $('closeModal')) $('closeModal').style.display = 'none';
   });
 
   // 防止 iframe 内拖拽选择
   document.addEventListener('selectstart', (e) => e.preventDefault());
+
+  // 平台入口下工具按钮位于外部底部栏：仅独立访问本页时显示工具栏
+  if (window.self === window.top) {
+    $('tools').style.display = 'flex';
+  } else {
+    // iframe 内无工具栏，快捷入口层/粘贴板面板贴底下移（不再避让工具栏）
+    $('dock').style.bottom = '10px';
+    $('clipPanel').style.bottom = '10px';
+  }
+  // 外部底部栏图标按钮 → 触发对应功能
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || d.source !== 'qwenpaw-desktop-outer' || !d.action) return;
+    const map = { dock: 'btnDock', res: 'btnRes', shot: 'btnShot', paste: 'btnPaste' };
+    const b = $(map[d.action]);
+    if (b) b.click();
+  });
 </script>
 </body>
 </html>

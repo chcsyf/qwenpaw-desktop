@@ -1,7 +1,7 @@
 {
   "id": "qwenpaw-desktop",
   "name": "远程桌面",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "本插件专用于 qwenpaw.platform.agentscope.io 平台。实时查看服务器虚拟桌面（Xvfb + openbox + x11vnc + noVNC），鼠标/键盘完整映射操作。纯桌面视图 + 右下角竖排快捷入口（GitHub/Google/Bing/百度/终端/文件）+ 📷 一键截图（预览/下载/保存到平台公共数据目录 plugin_data/screenshots）+ 📋 剪贴板互通（xclip 读写远程 CLIPBOARD，UTF-8 中文无乱码，自动粘贴）+ 🖥 分辨率切换（1280x720/1440x900/1920x1080）。适合访问本地网络打不开的网站（如 github）：在桌面里以 chromium 窗口打开，交互 100% 真实。noVNC 经插件同源 WebSocket 转发连接 VNC，不暴露额外端口。应用启动入口：应用 → 远程桌面。注意：安装前需在服务器手动安装系统依赖包（xvfb、openbox、x11vnc、xdotool、x11-xserver-utils、novnc、xfce4-terminal、thunar、chromium、scrot、xclip，详见 README.md），插件不会自动安装系统包。",
   "author": "archigram",
   "license": "Apache-2.0",

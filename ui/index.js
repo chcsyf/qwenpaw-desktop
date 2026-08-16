@@ -1,5 +1,5 @@
 /**
- * QwenPaw Web 远程桌面 v0.1.1 — 前端 GUI
+ * QwenPaw Web 远程桌面 v0.1.2 — 前端 GUI
  * （qwenpaw.platform.agentscope.io 专用插件）
  *
  * 纯桌面视图：iframe 内嵌自定义 noVNC 页面（/api/qwenpaw-desktop/desktop_page）。
@@ -22,7 +22,7 @@
 
   var PLUGIN_ID = "qwenpaw-desktop";
   var PLUGIN_NAME = "远程桌面";
-  var VERSION = "0.1.1";
+  var VERSION = "0.1.2";
 
   // ---------- 样式（GitHub Dark，最小化） ----------
   var C = {
@@ -64,6 +64,15 @@
     statusDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
     hint: { color: C.muted, fontSize: 12, flexShrink: 0 },
     spacer: { flex: 1 },
+    iconBtn: {
+      background: "transparent", color: C.text,
+      border: "1px solid " + C.border,
+      borderRadius: 6,
+      padding: "2px 9px",
+      cursor: "pointer",
+      fontSize: 14,
+      lineHeight: "20px",
+    },
     closeBtn: {
       background: "transparent", color: C.red,
       border: "1px solid " + C.red,
@@ -95,6 +104,7 @@
       running: null,
       startedAt: null,
       procs: {},
+      confirmClose: false,
     });
     var state = _st[0];
     var setState = _st[1];
@@ -115,17 +125,28 @@
       showToast("已重新连接");
     };
 
-    // 关闭桌面
+    // 关闭桌面：自定义确认弹窗（适配主题）
     var doClose = function () {
-      if (!window.confirm("关闭服务器远程桌面，释放资源？\n下次打开会自动重启。")) {
-        return;
-      }
+      update({ confirmClose: true });
+    };
+    var doCloseCancel = function () {
+      update({ confirmClose: false });
+    };
+    var doCloseConfirm = function () {
       fetchJson("/api/" + PLUGIN_ID + "/close", { method: "POST" })
         .then(function (r) {
-          update({ running: false, procs: {}, startedAt: null });
+          update({ running: false, procs: {}, startedAt: null, confirmClose: false });
           showToast(r.message || "远程桌面已关闭");
         })
-        .catch(function (e) { showToast(String(e)); });
+        .catch(function (e) { showToast(String(e)); update({ confirmClose: false }); });
+    };
+
+    // 向桌面页（iframe）发送工具按钮指令
+    var postTool = function (action) {
+      var fr = document.querySelector("iframe");
+      if (fr && fr.contentWindow) {
+        fr.contentWindow.postMessage({ source: "qwenpaw-desktop-outer", action: action }, "*");
+      }
     };
 
     // 状态轮询（每 5s）
@@ -174,23 +195,58 @@
           },
         }, state.toast) : null,
       ),
-      // 最小状态条
+      // 最小状态条：状态点 + 状态文字 + 右侧图标工具按钮（悬停有名称提示）
       h("div", { style: S.statusBar },
         h("span", { style: Object.assign({}, S.statusDot, { background: statusColor }), title: statusLabel }),
         h("span", { style: S.hint }, statusLabel),
-        h("button", {
-          type: "button",
-          style: {
-            background: "transparent", color: C.muted,
-            border: "1px solid " + C.border, borderRadius: 6,
-            padding: "2px 8px", cursor: "pointer", fontSize: 12,
-          },
-          title: "重新建立 noVNC 连接",
-          onClick: reconnect,
-        }, "重连"),
         h("span", { style: S.spacer }),
-        h("button", { type: "button", style: S.closeBtn, title: "关闭服务器远程桌面（释放资源）", onClick: doClose }, "关闭桌面"),
+        h("button", { type: "button", style: S.iconBtn, title: "快捷入口", onClick: function () { postTool("dock"); } }, "☰"),
+        h("button", { type: "button", style: S.iconBtn, title: "分辨率", onClick: function () { postTool("res"); } }, "🖥"),
+        h("button", { type: "button", style: S.iconBtn, title: "截图当前桌面", onClick: function () { postTool("shot"); } }, "📷"),
+        h("button", { type: "button", style: S.iconBtn, title: "打开粘贴板", onClick: function () { postTool("paste"); } }, "📋"),
+        h("button", { type: "button", style: S.iconBtn, title: "重新连接", onClick: reconnect }, "⟳"),
+        h("button", { type: "button", style: S.closeBtn, title: "关闭桌面", onClick: doClose }, "⏻"),
       ),
+      // 关闭桌面确认弹窗（自定义样式）
+      state.confirmClose ? h("div", {
+        style: {
+          position: "fixed", inset: 0, zIndex: 210,
+          background: "rgba(1,4,9,.82)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        },
+        onClick: function (e) { if (e.target === e.currentTarget) doCloseCancel(); },
+      },
+        h("div", {
+          style: {
+            width: 320,
+            background: C.panel, border: "1px solid " + C.border,
+            borderRadius: 10, padding: "20px 24px 16px",
+            boxShadow: "0 8px 24px rgba(0,0,0,.5)",
+          },
+        },
+          h("div", { style: { color: C.text, fontSize: 15, fontWeight: 600, marginBottom: 8 } }, "关闭远程桌面"),
+          h("div", { style: { color: C.muted, fontSize: 12, lineHeight: "1.6", marginBottom: 18 } },
+            "确定要关闭远程桌面吗？关闭后当前连接将断开，已保存的文件不受影响。"),
+          h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
+            h("button", {
+              type: "button",
+              style: {
+                background: "#21262d", color: C.text, border: "1px solid " + C.border,
+                borderRadius: 8, padding: "6px 16px", fontSize: 12, cursor: "pointer",
+              },
+              onClick: doCloseCancel,
+            }, "取消"),
+            h("button", {
+              type: "button",
+              style: {
+                background: "#da3633", color: "#fff", border: "1px solid #da3633",
+                borderRadius: 8, padding: "6px 16px", fontSize: 12, cursor: "pointer",
+              },
+              onClick: doCloseConfirm,
+            }, "确认关闭"),
+          ),
+        ),
+      ) : null,
     );
   }
 
