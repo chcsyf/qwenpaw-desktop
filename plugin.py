@@ -1,5 +1,5 @@
 """
-QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.1.2
+QwenPaw Web 远程桌面插件（qwenpaw-desktop）v0.2.0
 （qwenpaw.platform.agentscope.io 专用插件）
 
 在 QwenPaw 界面内实时查看**服务器上的虚拟桌面**，鼠标/键盘操作完整映射到远程
@@ -47,8 +47,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -56,7 +56,7 @@ from qwenpaw.pawapp import PawApp
 
 logger = logging.getLogger(__name__)
 
-PLUGIN_VERSION = "0.1.3"
+PLUGIN_VERSION = "0.2.0"
 PLUGIN_NAME = "远程桌面"
 PLUGIN_ID = "qwenpaw-desktop"
 
@@ -70,6 +70,8 @@ SCREEN_PRESETS = [
 VNC_HOST = "127.0.0.1"
 VNC_PORT = 5900
 NOVNC_DIR = "/usr/share/novnc"
+# WebSocket polyfill：平台网关剥掉 WS 升级头时，把 noVNC 的 WS 流量改走 HTTP 流式通道
+WS_POLYFILL_JS = Path(__file__).parent / "ui" / "ws-polyfill.js"
 CHROMIUM = "/usr/bin/chromium"
 CHROME_DATA = "/tmp/qwenpaw-desktop-chrome"
 # 快捷入口图标：优先用插件自带的 assets/icons/，缺失时 fallback 到 /root/.icons/
@@ -103,8 +105,6 @@ def _current_screen() -> str:
 def _set_screen(w: int, h: int) -> None:
     """切换虚拟屏幕分辨率：重启桌面栈使新尺寸生效。"""
     global _screen_size
-    # 注：_set_screen 由 /resolution 经 asyncio.to_thread 调用，本身已在线程池里执行，
-    # 这里可以直接调用同步的 _stop_desktop / _ensure_desktop。
     _stop_desktop()
     _screen_size = f"{w}x{h}x24"
     _ensure_desktop()
@@ -470,6 +470,23 @@ async def get_desktop_page():
                         headers={"Cache-Control": "no-store"})
 
 
+@router.get("/ws-polyfill.js")
+async def get_ws_polyfill():
+    """返回 WebSocket polyfill（noVNC 页面在加载 rfb.js 之前引用）。
+
+    平台网关会剥掉 WS 握手的 Upgrade/Connection 头，此时由该 polyfill 把
+    noVNC 的 WebSocket 流量透明改走 /vnc-stream + /vnc-input 两个 HTTP 端点。
+    """
+    if not WS_POLYFILL_JS.exists():
+        raise HTTPException(status_code=404, detail="ws-polyfill.js 未找到")
+    # no-store：前端迭代频繁，避免浏览器缓存旧版本
+    return FileResponse(
+        str(WS_POLYFILL_JS),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/icon")
 async def get_icon(name: str):
     """返回快捷入口图标（优先插件自带 assets/icons/，fallback /root/.icons/）。"""
@@ -485,7 +502,7 @@ async def get_icon(name: str):
 @router.get("/status")
 async def get_status():
     # _vnc_ready() 是 socket.create_connection(..., timeout=1) 的阻塞式网络探测，
-    # 丢到线程池，避免在事件循环线程上等待。
+    # 丢到线程池，避免在事件循环线程上等待（UI 会周期性轮询本接口）。
     vnc_ready = await asyncio.to_thread(_vnc_ready)
     return {
         "ok": True,
@@ -538,10 +555,13 @@ async def set_resolution(req: ResolutionRequest):
 
 @router.post("/open")
 async def open_page(req: OpenRequest):
-    """在虚拟桌面打开 URL（chromium 窗口）。"""
+    """在虚拟桌面打开 URL（chromium 窗口）。
+
+    open_in_desktop() 是同步实现（内含 _ensure_desktop 的等待与 Popen），
+    必须用 to_thread 移出事件循环 —— 否则 chromium 冷启动这几秒会把整个
+    服务的事件循环一起冻住。
+    """
     try:
-        # open_in_desktop → _ensure_desktop（Popen + socket 探测 + sleep 等待）是阻塞逻辑，
-        # 丢线程池，避免冻结事件循环。
         return await asyncio.to_thread(open_in_desktop, req.url)
     except Exception as exc:  # noqa: BLE001
         logger.exception("[qwenpaw-desktop] open failed")
@@ -552,7 +572,6 @@ async def open_page(req: OpenRequest):
 async def launch_page(req: LaunchRequest):
     """在虚拟桌面启动桌面应用（terminal / files / chromium）。"""
     try:
-        # 同上：launch_in_desktop 内含 _ensure_desktop 阻塞等待
         return await asyncio.to_thread(launch_in_desktop, req.app)
     except Exception as exc:  # noqa: BLE001
         logger.exception("[qwenpaw-desktop] launch failed")
@@ -562,7 +581,7 @@ async def launch_page(req: LaunchRequest):
 @router.post("/close")
 async def close_desktop():
     """手动关闭桌面，释放资源；下次操作自动重启。"""
-    # _stop_desktop 会 kill 子进程并等待退出（阻塞），丢线程池
+    # _stop_desktop 会 kill 子进程并等待退出（阻塞），丢线程池，避免冻结事件循环
     await asyncio.to_thread(_stop_desktop)
     return {"ok": True, "message": "远程桌面已关闭，资源已释放；下次打开会自动重启"}
 
@@ -634,8 +653,7 @@ async def vnc_ws(ws: WebSocket):
     RFB 是二进制字节流，这里做纯透明双向转发。
     """
     await ws.accept()
-    # _ensure_desktop 内含 Popen、socket 探测、xset/xdotool 子进程（timeout=5）等
-    # 阻塞调用，必须丢线程池，否则每次建立 VNC 连接都会冻结事件循环。
+    # 同步准备（Popen/等待 x11vnc）必须移出事件循环，否则首次连接会冻结整个事件循环数秒
     await asyncio.to_thread(_ensure_desktop)
     reader, writer = None, None
     try:
@@ -700,6 +718,226 @@ def _safe_close_writer(writer):
         pass
 
 
+# ---------- HTTP 流式通道：平台网关剥掉 WS hop-by-hop 头时的降级传输 ----------
+#
+# 背景：部分平台网关（如 *.qwenpaw.platform.agentscope.io）按 RFC 7230 §6.1 剥掉
+# WebSocket 握手的 Upgrade/Connection 头，导致 /vnc 的 WS 升级永远失败（实测确认）。
+# 但实测同时确认：这些网关**不会**剥自定义头，也**不会**缓冲流式响应。
+# 因此可以把 WebSocket 流量改走普通 HTTP：
+#
+#   下行 GET    /vnc-stream?sid=xxx  → 从 VNC 5900 读，逐块流式下发
+#   上行 POST   /vnc-input?sid=xxx   → 请求体写入 VNC 5900
+#   关闭 DELETE /vnc-stream?sid=xxx
+#
+# 前端由 ui/ws-polyfill.js 透明接管 window.WebSocket，noVNC 完全无感知。
+# 原生 WS 可用的环境下不需要走这条路，/vnc 的 WebSocket 版本保持不动。
+
+_PIPE_TTL_SEC = 120.0  # 空闲多久回收通道
+_pipes: "dict" = {}    # sid -> _PipeSession
+
+
+class _PipeSession:
+    """一条 HTTP 流式通道对应的 VNC 连接。"""
+
+    __slots__ = ("reader", "writer", "last")
+
+    def __init__(self, reader, writer):
+        self.reader = reader
+        self.writer = writer
+        self.last = time.time()
+
+    def touch(self) -> None:
+        self.last = time.time()
+
+    def close(self) -> None:
+        try:
+            self.writer.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _pipe_gc() -> None:
+    """回收空闲超时的通道。"""
+    now = time.time()
+    for sid in [k for k, v in _pipes.items() if now - v.last > _PIPE_TTL_SEC]:
+        sess = _pipes.pop(sid, None)
+        if sess is not None:
+            sess.close()
+
+
+async def _pipe_open(sid: str) -> "_PipeSession":
+    """按 sid 取或建通道（不存在则连到本地 VNC）。"""
+    _pipe_gc()
+    sess = _pipes.get(sid)
+    if sess is not None:
+        sess.touch()
+        return sess
+    reader, writer = await asyncio.open_connection(VNC_HOST, VNC_PORT)
+    sess = _PipeSession(reader, writer)
+    _pipes[sid] = sess
+    logger.info("[qwenpaw-desktop] http-pipe opened sid=%s (total=%d)", sid, len(_pipes))
+    return sess
+
+
+def _pipe_drop(sid: str) -> bool:
+    """关闭并移除通道。"""
+    sess = _pipes.pop(sid, None)
+    if sess is None:
+        return False
+    sess.close()
+    logger.info("[qwenpaw-desktop] http-pipe closed sid=%s (total=%d)", sid, len(_pipes))
+    return True
+
+
+@router.get("/vnc-stream")
+async def vnc_stream(sid: str, request: Request):
+    """下行：VNC 输出以 HTTP 流式响应持续下发给前端 polyfill。"""
+    # 同步准备移出事件循环，避免首次连接冻结事件循环
+    await asyncio.to_thread(_ensure_desktop)
+    try:
+        sess = await _pipe_open(sid)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[qwenpaw-desktop] http-pipe connect failed")
+        raise HTTPException(status_code=503, detail="VNC 连接失败: %s" % exc)
+
+    async def _gen():
+        total = 0
+        why = "?"
+        try:
+            while True:
+                if await request.is_disconnected():
+                    why = "client-disconnected"
+                    break
+                try:
+                    # 带超时的读：既能让出事件循环，也便于及时察觉客户端已断开
+                    data = await asyncio.wait_for(sess.reader.read(65536), timeout=30)
+                except asyncio.TimeoutError:
+                    continue
+                if not data:
+                    why = "vnc-eof"
+                    break  # VNC 侧关闭
+                sess.touch()
+                total += len(data)
+                yield data
+            why = why if why != "?" else "loop-exit"
+        except Exception as exc:  # noqa: BLE001
+            why = "exception:%r" % (exc,)
+        finally:
+            # 用 print 而非 logger：插件 logger 未接入主日志，print 会落到 app.out.log
+            print("[desktop-gen] sid=%s total=%d why=%s" % (sid, total, why), flush=True)
+            _pipe_drop(sid)
+
+    return StreamingResponse(
+        _gen(),
+        # 用 application/octet-stream：二进制流，避免中间层按文本/SSE 语义处理。
+        # no-transform 显式要求中间层不得转换/压缩/攒批。
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "no-store, no-transform",
+            "X-Accel-Buffering": "no",  # nginx 专用：禁止 proxy_buffering
+        },
+    )
+
+
+# 上行帧魔数：'Q' 'K'，与前端 ui/ws-polyfill.js 保持一致
+_UP_MAGIC = b"QK"
+
+
+def _deframe_up(body: bytes):
+    """解出上行帧的载荷；帧不合法返回 None。
+
+    为什么要校验：平台网关会串改上行 body —— 实测 noVNC 发出的
+    ``SetPixelFormat``(20B) 与 ``SetEncodings``(80B) 两个 POST，到达容器时前
+    20 字节变成了完全相同的内容（前一个请求的 FBUR 与后一个请求的编码片段被粘
+    在了一起）。x11vnc 收到这种非法字节会直接 RST 整条连接，于是表现为
+    "握手完成后画面永远不来"。
+
+    这里用魔数 + 长度双重校验：任何不符的帧一律丢弃，绝不写进 VNC 流。
+    宁可丢几个鼠标/键盘事件，也不能让 VNC 连接被打断。
+    """
+    if len(body) < 4 or body[:2] != _UP_MAGIC:
+        return None
+    n = (body[2] << 8) | body[3]
+    payload = body[4:]
+    if len(payload) != n:
+        return None
+    return payload
+
+
+@router.post("/vnc-input")
+async def vnc_input(sid: str, request: Request):
+    """上行：把前端 polyfill 的帧持续写入 VNC。
+
+    支持两种形态：
+      * **单个流式 POST**（首选）：前端用 ReadableStream 作为请求体，帧随产随推。
+        这样整条上行只有一个 HTTP 请求，彻底消除"每帧一次网关往返"的延迟
+        （实测逐帧独立 POST 会让 noVNC 的"收到一帧→请求下一帧"循环每轮都付一次
+        往返代价，累积成 20-40 秒延迟）。
+      * **逐帧独立 POST**（降级）：浏览器不支持 duplex 流式请求体时回退。
+
+    无论哪种形态，都按帧边界解析（魔数 + 长度），坏数据一律丢弃，绝不喂给 x11vnc。
+    """
+    sess = _pipes.get(sid)
+    if sess is None:
+        raise HTTPException(status_code=404, detail="通道不存在或已关闭")
+
+    buf = b""
+    written = 0
+    dropped = 0
+    last_seq = -1
+    out_of_order = 0
+
+    async for chunk in request.stream():
+        if not chunk:
+            continue
+        buf += chunk
+        while len(buf) >= 6:
+            if buf[:2] != _UP_MAGIC:
+                # 数据失步（网关串改）：丢弃整个缓冲，等下一个合法帧头
+                print("[desktop-in] BAD-FRAME sid=%s buf=%d hex=%s" % (
+                    sid, len(buf), buf[:16].hex()), flush=True)
+                dropped += len(buf)
+                buf = b""
+                break
+            seq = (buf[2] << 8) | buf[3]
+            n = (buf[4] << 8) | buf[5]
+            if len(buf) < 6 + n:
+                break  # 帧还没收全
+            payload = buf[6:6 + n]
+            buf = buf[6 + n:]
+
+            # 序号判定：上行是并发发出的（不再串行等待响应，否则每帧都要付一次
+            # 网关往返），所以可能乱序到达。落后/重复的帧直接丢弃——VNC 的输入
+            # 事件丢掉几个无妨，但不能把过期的状态写回去。
+            if last_seq >= 0:
+                diff = (seq - last_seq) & 0xffff
+                if diff == 0 or diff > 0x8000:
+                    out_of_order += 1
+                    continue
+            last_seq = seq
+
+            if payload:
+                try:
+                    sess.writer.write(payload)
+                    await sess.writer.drain()
+                    sess.touch()
+                    written += len(payload)
+                except Exception as exc:  # noqa: BLE001
+                    _pipe_drop(sid)
+                    print("[desktop-in] write failed sid=%s: %r" % (sid, exc), flush=True)
+                    return {"ok": False, "written": written, "error": str(exc)}
+
+    print("[desktop-in] sid=%s done written=%d dropped=%d ooo=%d" % (
+        sid, written, dropped, out_of_order), flush=True)
+    return {"ok": True, "written": written, "dropped": dropped, "ooo": out_of_order}
+
+
+@router.delete("/vnc-stream")
+async def vnc_stream_close(sid: str):
+    """显式关闭通道（前端 close() 时调用）。"""
+    return {"closed": _pipe_drop(sid)}
+
+
 # ---------- noVNC 静态资源 ----------
 
 router.mount("/novnc", StaticFiles(directory=NOVNC_DIR), name="novnc")
@@ -709,6 +947,20 @@ router.mount("/novnc", StaticFiles(directory=NOVNC_DIR), name="novnc")
 
 app = PawApp(name=PLUGIN_NAME, app_id=PLUGIN_ID)
 app.include_router(router)
+
+
+@app.hook("startup")
+async def _startup() -> None:
+    """预热虚拟桌面。
+
+    提前把 Xvfb/openbox/x11vnc 拉起来，这样用户第一次打开远程桌面时不必再等
+    _ensure_desktop() 的启动序列（约 2 秒）。放后台线程执行，不拖慢插件加载。
+    """
+    try:
+        await asyncio.to_thread(_ensure_desktop)
+        logger.info("[qwenpaw-desktop] desktop prewarmed")
+    except Exception:  # noqa: BLE001
+        logger.exception("[qwenpaw-desktop] prewarm failed")
 
 
 @app.hook("shutdown")

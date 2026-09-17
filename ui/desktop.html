@@ -270,6 +270,12 @@
 <input id="kbInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 <div id="toast"></div>
 
+<!-- WebSocket polyfill —— 必须在 noVNC 之前加载。
+     平台网关按 RFC 7230 剥掉 WS 握手的 Upgrade/Connection（hop-by-hop）头，
+     noVNC 的原生 WebSocket 因此永远无法升级。本脚本接管 window.WebSocket，
+     把 /api/qwenpaw-desktop/vnc 的流量透明改走 HTTP 流式通道；
+     其他 URL 一律交回原生实现。需要强制用原生 WS 时加 ?ws=native。 -->
+<script src="/api/qwenpaw-desktop/ws-polyfill.js"></script>
 <script type="module">
   import RFB from '/api/qwenpaw-desktop/novnc/core/rfb.js';
 
@@ -295,7 +301,7 @@
     statusEl.textContent = '已连接';
     statusEl.classList.add('on');
     // 连接成功后自动聚焦输入（桌面端物理键盘直接可用）
-    rfb.focusInput();
+    rfb.focus();
   });
   rfb.addEventListener('disconnect', (e) => {
     statusEl.textContent = '已断开' + (e.detail && e.detail.clean ? '' : '（重连中…）');
@@ -569,10 +575,82 @@
     }
   }, true);
 
-  // ---- 键盘：桌面端物理键盘 & 移动端系统软键盘 ----
+  // ---- 键盘：接管到隐藏输入框，以支持本地输入法（IME）中文 ----
+  //
+  // 为什么需要接管：noVNC 只监听 keydown/keyup，而 canvas 不是可编辑元素，
+  // 输入法在 canvas 上根本不会激活 —— 中文（以及任何 IME 语言）必然打不出来。
+  // 这里把焦点放在隐藏的 kbInput 上：
+  //   * 普通按键  → 我们自己转成 keysym 调 rfb.sendKey() 转发
+  //   * IME 组合  → compositionend 时把每个字符按 X11 的 Unicode keysym 约定
+  //                 (0x01000000 + codepoint) 发送，x11vnc 会为其动态分配 keycode
   const kbInput = $('kbInput');
-  // 点击画面时聚焦隐藏输入框（桌面端捕获物理键盘；移动端点击唤起系统软键盘）
-  document.addEventListener('mousedown', () => { rfb.focusInput(); }, true);
+
+  // X11 keysym 常量（常用键）
+  const XK = {
+    BackSpace: 0xff08, Tab: 0xff09, Return: 0xff0d, Escape: 0xff1b,
+    Home: 0xff50, Left: 0xff51, Up: 0xff52, Right: 0xff53, Down: 0xff54,
+    Prior: 0xff55, Next: 0xff56, End: 0xff57, Insert: 0xff63, Delete: 0xffff,
+    Shift_L: 0xffe1, Control_L: 0xffe3, Caps_Lock: 0xffe5, Meta_L: 0xffe7,
+    Alt_L: 0xffe9,
+  };
+  const NAMED_KEYS = {
+    Enter: XK.Return, Backspace: XK.BackSpace, Tab: XK.Tab, Escape: XK.Escape,
+    ArrowLeft: XK.Left, ArrowRight: XK.Right, ArrowUp: XK.Up, ArrowDown: XK.Down,
+    Home: XK.Home, End: XK.End, PageUp: XK.Prior, PageDown: XK.Next,
+    Insert: XK.Insert, Delete: XK.Delete, CapsLock: XK.Caps_Lock,
+    Shift: XK.Shift_L, Control: XK.Control_L, Alt: XK.Alt_L, Meta: XK.Meta_L,
+  };
+
+  function keysymFor(e) {
+    const k = e.key;
+    if (!k) return null;
+    if (k.length === 1) {
+      const cp = k.codePointAt(0);
+      return cp < 0x100 ? cp : 0x01000000 + cp; // X11 Unicode keysym 约定
+    }
+    if (NAMED_KEYS[k] !== undefined) return NAMED_KEYS[k];
+    const m = /^F(\d{1,2})$/.exec(k);
+    if (m) return 0xffbe + (parseInt(m[1], 10) - 1); // F1..F12
+    return null;
+  }
+
+  kbInput.addEventListener('keydown', (e) => {
+    // 229 / isComposing：IME 正在组合，这段交给 compositionend，否则会把拼音字母也发过去
+    if (e.isComposing || e.keyCode === 229) return;
+    const ks = keysymFor(e);
+    if (ks === null) return;
+    rfb.sendKey(ks, e.code || null, true);
+    e.preventDefault();
+  });
+
+  kbInput.addEventListener('keyup', (e) => {
+    if (e.isComposing) return;
+    const ks = keysymFor(e);
+    if (ks === null) return;
+    rfb.sendKey(ks, e.code || null, false);
+    e.preventDefault();
+  });
+
+  // IME 组合结束：逐字符发 Unicode keysym（中文/日文/韩文等）
+  kbInput.addEventListener('compositionend', (e) => {
+    const text = (e && e.data) || kbInput.value || '';
+    kbInput.value = '';
+    for (const ch of text) {
+      const cp = ch.codePointAt(0);
+      if (!cp) continue;
+      const ks = cp < 0x100 ? cp : 0x01000000 + cp;
+      rfb.sendKey(ks, null, true);
+      rfb.sendKey(ks, null, false);
+    }
+  });
+
+  // 点击画面时把焦点交给 kbInput（输入法需要可编辑元素才能激活）；
+  // 点在真实输入框（剪贴板输入框等）上时不要抢
+  document.addEventListener('mousedown', (e) => {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    kbInput.focus();
+  }, true);
   document.addEventListener('touchstart', () => { kbInput.focus(); }, { passive: true });
 
   // ---- 快捷入口 ----
@@ -580,6 +658,8 @@
   document.querySelectorAll('.sc').forEach((el) => {
     el.addEventListener('click', async () => {
       const app = el.dataset.app;
+      // 应用（尤其 chromium）冷启动需要数秒，先明确告知，避免用户以为没反应
+      toast('正在启动，初次打开约需 10 秒，请稍候…');
       let ok = false, msg = '';
       try {
         if (app.startsWith('http')) {

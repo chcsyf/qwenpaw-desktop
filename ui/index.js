@@ -1,5 +1,5 @@
 /**
- * QwenPaw Web 远程桌面 v0.1.2 — 前端 GUI
+ * QwenPaw Web 远程桌面 v0.2.0 — 前端 GUI
  * （qwenpaw.platform.agentscope.io 专用插件）
  *
  * 纯桌面视图：iframe 内嵌自定义 noVNC 页面（/api/qwenpaw-desktop/desktop_page）。
@@ -22,7 +22,7 @@
 
   var PLUGIN_ID = "qwenpaw-desktop";
   var PLUGIN_NAME = "远程桌面";
-  var VERSION = "0.1.3";
+  var VERSION = "0.2.0";
 
   // ---------- 样式（GitHub Dark，最小化） ----------
   var C = {

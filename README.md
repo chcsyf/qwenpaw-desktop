@@ -1,4 +1,4 @@
-# qwenpaw-desktop — Web 远程桌面插件 v0.1.3
+# qwenpaw-desktop — Web 远程桌面插件 v0.2.0
 
 > **专用于 qwenpaw.platform.agentscope.io 平台**。打开入口：**应用 → 远程桌面** 🖥️
 
@@ -21,6 +21,13 @@
 - ⏻ **关闭桌面确认弹窗**：暗色主题自定义弹窗（桌面内与状态栏两处关闭按钮统一）
 - 桌面端物理键盘直接可用；远程 X 桌面强制开启 NumLock，数字小键盘正常
 - 适合访问本地打不开的网站（如 github）：在服务器桌面里以 chromium 窗口打开
+
+## 🔍 问题排查记录
+
+「远程桌面连不上」的完整排查过程、做过的尝试（VNC 服务层修复 / 平台网关吞
+Upgrade 头 / uvicorn 补丁 / 补头代理 / SSE 降级评估）、得到的结论，以及当前仍未
+解决的真实根因（qwenpaw 应用层对 WS 请求返回 403），见：
+**[`docs/troubleshooting.md`](docs/troubleshooting.md)**。
 
 ## ⚠️ 安装前必读：手动安装系统包
 
