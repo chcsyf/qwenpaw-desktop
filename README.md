@@ -1,4 +1,4 @@
-# qwenpaw-desktop — Web 远程桌面插件 v0.1.2
+# qwenpaw-desktop — Web 远程桌面插件 v0.1.3
 
 > **专用于 qwenpaw.platform.agentscope.io 平台**。打开入口：**应用 → 远程桌面** 🖥️
 

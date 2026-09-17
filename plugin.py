@@ -56,7 +56,7 @@ from qwenpaw.pawapp import PawApp
 
 logger = logging.getLogger(__name__)
 
-PLUGIN_VERSION = "0.1.2"
+PLUGIN_VERSION = "0.1.3"
 PLUGIN_NAME = "远程桌面"
 PLUGIN_ID = "qwenpaw-desktop"
 
@@ -103,6 +103,8 @@ def _current_screen() -> str:
 def _set_screen(w: int, h: int) -> None:
     """切换虚拟屏幕分辨率：重启桌面栈使新尺寸生效。"""
     global _screen_size
+    # 注：_set_screen 由 /resolution 经 asyncio.to_thread 调用，本身已在线程池里执行，
+    # 这里可以直接调用同步的 _stop_desktop / _ensure_desktop。
     _stop_desktop()
     _screen_size = f"{w}x{h}x24"
     _ensure_desktop()
@@ -482,6 +484,9 @@ async def get_icon(name: str):
 
 @router.get("/status")
 async def get_status():
+    # _vnc_ready() 是 socket.create_connection(..., timeout=1) 的阻塞式网络探测，
+    # 丢到线程池，避免在事件循环线程上等待。
+    vnc_ready = await asyncio.to_thread(_vnc_ready)
     return {
         "ok": True,
         "name": PLUGIN_NAME,
@@ -490,7 +495,7 @@ async def get_status():
         "display": DISPLAY,
         "screen": _current_screen(),
         "vnc_port": VNC_PORT,
-        "running": _vnc_ready(),
+        "running": vnc_ready,
         "started_at": _started_at,
         "uptime_sec": int(time.time() - _started_at) if _started_at else None,
         "procs": {k: (v.pid if v.poll() is None else None) for k, v in _procs.items()},
@@ -535,7 +540,9 @@ async def set_resolution(req: ResolutionRequest):
 async def open_page(req: OpenRequest):
     """在虚拟桌面打开 URL（chromium 窗口）。"""
     try:
-        return open_in_desktop(req.url)
+        # open_in_desktop → _ensure_desktop（Popen + socket 探测 + sleep 等待）是阻塞逻辑，
+        # 丢线程池，避免冻结事件循环。
+        return await asyncio.to_thread(open_in_desktop, req.url)
     except Exception as exc:  # noqa: BLE001
         logger.exception("[qwenpaw-desktop] open failed")
         return {"ok": False, "error": str(exc)}
@@ -545,7 +552,8 @@ async def open_page(req: OpenRequest):
 async def launch_page(req: LaunchRequest):
     """在虚拟桌面启动桌面应用（terminal / files / chromium）。"""
     try:
-        return launch_in_desktop(req.app)
+        # 同上：launch_in_desktop 内含 _ensure_desktop 阻塞等待
+        return await asyncio.to_thread(launch_in_desktop, req.app)
     except Exception as exc:  # noqa: BLE001
         logger.exception("[qwenpaw-desktop] launch failed")
         return {"ok": False, "error": str(exc)}
@@ -554,7 +562,8 @@ async def launch_page(req: LaunchRequest):
 @router.post("/close")
 async def close_desktop():
     """手动关闭桌面，释放资源；下次操作自动重启。"""
-    _stop_desktop()
+    # _stop_desktop 会 kill 子进程并等待退出（阻塞），丢线程池
+    await asyncio.to_thread(_stop_desktop)
     return {"ok": True, "message": "远程桌面已关闭，资源已释放；下次打开会自动重启"}
 
 
@@ -625,7 +634,9 @@ async def vnc_ws(ws: WebSocket):
     RFB 是二进制字节流，这里做纯透明双向转发。
     """
     await ws.accept()
-    _ensure_desktop()
+    # _ensure_desktop 内含 Popen、socket 探测、xset/xdotool 子进程（timeout=5）等
+    # 阻塞调用，必须丢线程池，否则每次建立 VNC 连接都会冻结事件循环。
+    await asyncio.to_thread(_ensure_desktop)
     reader, writer = None, None
     try:
         reader, writer = await asyncio.open_connection(VNC_HOST, VNC_PORT)
@@ -703,7 +714,9 @@ app.include_router(router)
 @app.hook("shutdown")
 async def _shutdown() -> None:
     """主服务退出时清理桌面进程，避免残留。"""
-    _stop_desktop()
+    # _stop_desktop 会 kill 子进程并等待退出（阻塞），shutdown 阶段也丢线程池，
+    # 避免拖住事件循环导致服务迟迟不退出。
+    await asyncio.to_thread(_stop_desktop)
     logger.info("[qwenpaw-desktop] Plugin stopped")
 
 

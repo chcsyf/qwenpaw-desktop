@@ -22,7 +22,7 @@
 
   var PLUGIN_ID = "qwenpaw-desktop";
   var PLUGIN_NAME = "远程桌面";
-  var VERSION = "0.1.2";
+  var VERSION = "0.1.3";
 
   // ---------- 样式（GitHub Dark，最小化） ----------
   var C = {

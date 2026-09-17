@@ -1,5 +1,16 @@
 # 变更记录
 
+## [0.1.3] — 2026-09-17
+
+- **修复：多处阻塞调用占用事件循环线程**
+  - `/status`：`_vnc_ready()`（socket 探测 timeout=1）→ `asyncio.to_thread`
+  - `/open`、`/launch`：`open_in_desktop()` / `launch_in_desktop()`（内含 `_ensure_desktop`
+    的 Popen + 端口轮询 + sleep 等待）→ `asyncio.to_thread`
+  - `/close` 与 shutdown hook：`_stop_desktop()`（kill + wait 退出）→ `asyncio.to_thread`
+  - WebSocket `/vnc`：建连时同步调用 `_ensure_desktop()`（内含 xset/xdotool 子进程 timeout=5）
+    → `asyncio.to_thread`
+  - 说明：截图 / 剪贴板 / 分辨率等重操作此前已用 `asyncio.to_thread`，本次补齐其余入口。
+
 ## [0.1.2] — 2026-08-16
 
 功能增强：
