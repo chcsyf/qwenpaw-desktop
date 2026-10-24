@@ -121,8 +121,8 @@
   PseudoWebSocket.CLOSED = CLOSED;
 
   PseudoWebSocket.prototype._fire = function (type, ev) {
-    // 诊断日志：默认开启，可在 Console 用 window.__qwenpawWsPolyfillDebug=false 关闭
-    if (window.__qwenpawWsPolyfillDebug !== false) {
+    // 诊断日志：默认关闭（逐帧输出很吵），需要时在 Console 执行 window.__qwenpawWsPolyfillDebug=true 开启
+    if (window.__qwenpawWsPolyfillDebug === true) {
       try {
         var extra = "";
         if (type === "message" && ev && ev.data) {
@@ -308,7 +308,7 @@
     frame[5] = payload.length & 0xff;
     frame.set(payload, FRAME_HDR);
 
-    if (window.__qwenpawWsPolyfillDebug !== false) {
+    if (window.__qwenpawWsPolyfillDebug === true) {
       try {
         var hex = "";
         var m = Math.min(20, frame.length);
@@ -374,7 +374,7 @@
       duplex: "half",
     })
       .then(function (r) {
-        if (window.__qwenpawWsPolyfillDebug !== false) {
+        if (window.__qwenpawWsPolyfillDebug === true) {
           console.log(
             "%c[ws-polyfill]%c upstream stream ended status=" + r.status,
             "color:#fbbf24;font-weight:bold",
@@ -384,7 +384,7 @@
         self._upCtrl = null;
       })
       .catch(function (e) {
-        if (window.__qwenpawWsPolyfillDebug !== false) {
+        if (window.__qwenpawWsPolyfillDebug === true) {
           console.log(
             "%c[ws-polyfill]%c upstream stream unavailable -> per-frame POST: " + e,
             "color:#f87171;font-weight:bold",
